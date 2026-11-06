@@ -47,6 +47,7 @@ int main(void)
     R.display = wl_display_create();
     if(!R.display){ fprintf(stderr,"railwl: cannot create display\n"); return 1; }
     R.loop = wl_display_get_event_loop(R.display);
+    rail_trace_init(R.display);   /* crash note for clients: /tmp/railwl-crash.txt */
 
     rail_lseat_init(&R);   /* seat daemon first: it opens the GPU for us */
     if(rail_output_init(&R) < 0){

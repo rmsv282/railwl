@@ -358,6 +358,8 @@ static void sel_end(struct rail *r, bool take)
     }
 }
 
+static void leds_sync(bool force);
+
 static void input_key(struct rail *r, struct input_event *e)
 {
     uint16_t code = e->code;
@@ -379,6 +381,7 @@ static void input_key(struct rail *r, struct input_event *e)
         xkb_state_update_key(xkb_st, (xkb_keycode_t)(code + 8),
                              down ? XKB_KEY_DOWN : XKB_KEY_UP);
         mods_changed = d0 != mod_depressed() || l0 != mod_latched() || k0 != mod_locked();
+        if(k0 != mod_locked()) leds_sync(false);   /* keyboard LEDs follow the locks */
     }
 
     if(code == KEY_LEFTMETA || code == KEY_RIGHTMETA){ meta_down = down; send_mods(); return; }
@@ -609,6 +612,31 @@ static void input_btn(struct rail *r, struct input_event *e)
 int rail_input_fds[64];
 int rail_input_nfds = 0;
 
+/* Keyboard LEDs.  With the keyboards grabbed (EVIOCGRAB) nothing else drives
+   them, so after every lock change we write EV_LED events to the devices.
+   Devices that are not keyboards simply reject the write. */
+static void leds_sync(bool force)
+{
+    static int last[3] = { -1, -1, -1 };
+    if(!xkb_st) return;
+    int now[3] = {
+        xkb_state_mod_name_is_active(xkb_st, XKB_MOD_NAME_NUM,  XKB_STATE_MODS_LOCKED) > 0,
+        xkb_state_mod_name_is_active(xkb_st, XKB_MOD_NAME_CAPS, XKB_STATE_MODS_LOCKED) > 0,
+        xkb_state_led_name_is_active(xkb_st, XKB_LED_NAME_SCROLL) > 0,
+    };
+    static const uint16_t code[3] = { LED_NUML, LED_CAPSL, LED_SCROLLL };
+    for(int l = 0; l < 3; l++){
+        if(!force && last[l] == now[l]) continue;
+        last[l] = now[l];
+        struct input_event ev[2];
+        memset(ev, 0, sizeof ev);
+        ev[0].type = EV_LED; ev[0].code = code[l]; ev[0].value = now[l];
+        ev[1].type = EV_SYN; ev[1].code = SYN_REPORT;
+        for(int i = 0; i < rail_input_nfds; i++)
+            (void)!write(rail_input_fds[i], ev, sizeof ev);
+    }
+}
+
 static int input_fd_cb(int fd, uint32_t mask, void *data)
 {
     (void)fd;
@@ -646,7 +674,8 @@ int rail_input_init(struct rail *r)
         if(strncmp(e->d_name, "event", 5)) continue;
         char path[256];
         snprintf(path, sizeof path, "/dev/input/%s", e->d_name);
-        int fd = rail_lseat_open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        int fd = rail_lseat_open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC);   /* RW: LED writes */
+        if(fd < 0) fd = rail_lseat_open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if(fd < 0) continue;
         /* grab: keys/mouse go only to railwl, not to the console behind it */
         if(rail_vt_ok()) ioctl(fd, EVIOCGRAB, 1);
@@ -654,6 +683,7 @@ int rail_input_init(struct rail *r)
         rail_input_fds[rail_input_nfds++] = fd;
     }
     closedir(d);
+    leds_sync(true);   /* NumLock starts on: light the LED to match */
     fprintf(stderr, "railwl: %d input devices\n", rail_input_nfds);
     return 0;
 }
@@ -662,6 +692,7 @@ int rail_input_init(struct rail *r)
 void rail_input_grab(bool on)
 {
     for(int i=0;i<rail_input_nfds;i++) ioctl(rail_input_fds[i], EVIOCGRAB, on ? 1 : 0);
+    if(on) leds_sync(true);   /* back from another VT: the LEDs may have been reset */
 }
 
 /* forget held modifiers: their release happened while we were not looking */

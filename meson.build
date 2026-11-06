@@ -101,6 +101,7 @@ railwl_sources = files(
   'src/vt.c',
   'src/capture.c',
   'src/lseat.c',
+  'src/trace.c',
 )
 
 executable('railwl', railwl_sources + [xdg_header, xdg_code, deco_header, deco_code,
