@@ -95,6 +95,10 @@ struct rail_surface {
     bool tex_shm;                /* texture storage came from glTexImage2D (not an EGLImage) */
     int  tex_w, tex_h;           /* size of that storage, to update it in place */
     bool buffer_dirty;           /* new commit waiting for upload */
+    /* damage reported since the last upload (buffer coords, x1/y1 exclusive);
+       dmg_any false = the client reported none, so upload everything */
+    bool dmg_any;
+    int  dmg_x0, dmg_y0, dmg_x1, dmg_y1;
     /* strip links (circular) */
     struct rail_surface *prev, *next;
     bool is_bar;
@@ -337,6 +341,8 @@ int rail_output_init(struct rail *r);
    dst needs w*h*4 bytes; -1 on failure */
 int rail_output_read_rgba(struct rail *r, uint8_t *dst);
 void rail_output_frame(struct rail *r);
+/* region screenshot selection (Super+Shift+S): drawn by output.c, driven by input.c */
+extern struct rail_sel { bool active, dragging; int x0, y0, x1, y1; } rail_sel;
 void rail_output_suspend(struct rail *r);
 void rail_output_resume(struct rail *r);
 /* dmabuf support (output.c): import planes into an EGLImage, and hand the

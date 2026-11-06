@@ -340,6 +340,24 @@ static void send_mods(void)
                                    mod_locked(), (uint32_t)layout_group);
 }
 
+struct rail_sel rail_sel;
+
+static void sel_end(struct rail *r, bool take)
+{
+    int x = rail_sel.x0 < rail_sel.x1 ? rail_sel.x0 : rail_sel.x1;
+    int y = rail_sel.y0 < rail_sel.y1 ? rail_sel.y0 : rail_sel.y1;
+    int w = abs(rail_sel.x1 - rail_sel.x0) + 1, h = abs(rail_sel.y1 - rail_sel.y0) + 1;
+    bool ok = take && rail_sel.dragging && w > 2 && h > 2;
+    rail_sel.active = rail_sel.dragging = false;
+    rail_output_frame(r);                 /* redraw without the overlay first */
+    if(ok){
+        char cmd[320];
+        snprintf(cmd, sizeof cmd, "mkdir -p ~/Pictures && shot -g %d,%d,%dx%d "
+                 "~/Pictures/shot-$(date +%%Y%%m%%d-%%H%%M%%S).png", x, y, w, h);
+        rail_spawn(cmd);
+    }
+}
+
 static void input_key(struct rail *r, struct input_event *e)
 {
     uint16_t code = e->code;
@@ -369,6 +387,12 @@ static void input_key(struct rail *r, struct input_event *e)
     if(code == KEY_LEFTALT || code == KEY_RIGHTALT){ alt_down = down; send_mods(); return; }
     if(code == KEY_CAPSLOCK && down){ cap_locked = !cap_locked; send_mods(); return; }
 
+    /* region selection owns the keyboard: Esc cancels, nothing reaches clients */
+    if(rail_sel.active){
+        if(down && code == KEY_ESC) sel_end(r, false);
+        return;
+    }
+
     /* alt+shift+e = exit compositor */
     if(down && alt_down && shift_down && code == KEY_E){
         r->quit = true; /* main loop checks this after the current dispatch returns */
@@ -384,8 +408,20 @@ static void input_key(struct rail *r, struct input_event *e)
         if(vt){ if(down) rail_vt_switch(vt); return; }
     }
 
+    /* Print = screenshot -> ~/Pictures/shot-YYYYmmdd-HHMMSS.png */
+    if(code == KEY_SYSRQ){
+        if(down) rail_spawn("mkdir -p ~/Pictures && shot -c ~/Pictures/shot-$(date +%Y%m%d-%H%M%S).png");
+        return; /* swallow the release too */
+    }
+
     /* compositor bindings (super held) */
     if(down && meta_down){
+        if(code == KEY_S && shift_down){
+            rail_sel.active = true; rail_sel.dragging = false;
+            rail_output_frame(r);
+            return;
+        }
+        if(code == KEY_S){ rail_spawn("mkdir -p ~/Pictures && shot -c ~/Pictures/shot-$(date +%Y%m%d-%H%M%S).png"); return; }
         if(code == KEY_TAB){ if(shift_down) rail_strip_focus_prev(r); else rail_strip_focus_next(r); return; }
         if(code >= KEY_1 && code <= KEY_9){ rail_ws_switch(r, code - KEY_1); return; }
         if(code == KEY_0){ rail_ws_switch(r, 9); return; }
@@ -402,7 +438,7 @@ static void input_key(struct rail *r, struct input_event *e)
             return;
         }
     }
-    if(!down && meta_down && (code == KEY_SPACE || code == KEY_D)) return; /* swallow its release */
+    if(!down && meta_down && (code == KEY_SPACE || code == KEY_D || code == KEY_S)) return; /* swallow its release */
 
     /* alt+left / alt+right: move left/right through the strip */
     if(alt_down && (code == KEY_LEFT || code == KEY_RIGHT)){
@@ -465,6 +501,11 @@ static void input_rel(struct rail *r, struct input_event *e)
     if(o->py < 0) o->py = 0;
     if(o->px >= o->w) o->px = o->w-1;
     if(o->py >= o->h) o->py = o->h-1;
+    if(rail_sel.active){
+        if(rail_sel.dragging){ rail_sel.x1 = o->px; rail_sel.y1 = o->py; }
+        rail_output_frame(r);
+        return;
+    }
     /* interactive drag overrides normal forwarding */
     if(r->dragging){
         rail_drag_motion(r, o->px, o->py);
@@ -520,6 +561,16 @@ static void input_btn(struct rail *r, struct input_event *e)
     bool pressed = e->value != 0;
     /* wl_pointer.button state is only ever 0 (released) or 1 (pressed), for every button */
     uint32_t b = pressed ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED;
+
+    if(rail_sel.active && o){
+        if(e->code == BTN_LEFT && pressed){
+            rail_sel.dragging = true;
+            rail_sel.x0 = rail_sel.x1 = o->px; rail_sel.y0 = rail_sel.y1 = o->py;
+            rail_output_frame(r);
+        } else if(e->code == BTN_LEFT) sel_end(r, true);
+        else if(pressed) sel_end(r, false);   /* any other button cancels */
+        return;
+    }
 
     if(e->code == BTN_LEFT && o){
         if(pressed){

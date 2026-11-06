@@ -19,25 +19,6 @@ static bool repeatable_key(uint32_t key);
 static struct xkb_keymap *g_keymap;
 static struct xkb_state *g_state;
 
-/* fallback table (unused when xkb keymap compiles) */
-/* keysym translation without xkbcommon: evdev keycode -> base ascii (unshifted/shifted) */
-static const struct { uint16_t code; uint32_t sym, shifted; } keytab[] = {
-    {1,27,27},{2,49,33},{3,50,64},{4,51,35},{5,52,36},{6,53,37},{7,54,94},
-    {8,55,38},{9,56,42},{10,57,40},{11,48,41},{12,45,95},{13,61,43},
-    {14,8,8},{15,9,9},{16,113,81},{17,119,87},{18,101,69},{19,114,82},
-    {20,116,84},{21,121,89},{22,117,85},{23,105,73},{24,111,79},{25,112,80},
-    {26,91,123},{27,93,125},{28,13,13},{29,65507,65507},{30,97,65},{31,115,83},
-    {32,100,68},{33,102,70},{34,103,71},{35,104,72},{36,106,74},{37,107,75},
-    {38,108,76},{39,59,58},{40,39,34},{41,96,126},{42,65505,65505},{43,92,124},
-    {44,122,90},{45,120,88},{46,99,67},{47,118,86},{48,98,66},{49,110,78},
-    {50,109,77},{51,44,60},{52,46,62},{53,47,63},{54,65505,65505},
-    {57,32,32},{58,65509,65509},{105,65513,65513},{108,65514,65514},
-    {125,65515,65515},{126,65516,65516},{103,65362,65362},{105-0,0,0},
-    {106,65363,65363},{108-2,0,0},{108,65514,65514},
-    {108,0,0},
-};
-#define KEYTAB_END 0
-
 /* ---------- shm helpers ---------- */
 static int create_shm_file(size_t size)
 {
@@ -82,8 +63,6 @@ static void toplevel_config_bounds(void *d, struct xdg_toplevel *t, int32_t w, i
 { (void)d;(void)t;(void)w;(void)h; }
 static void toplevel_wm_state(void *d, struct xdg_toplevel *t, struct wl_array *s)
 { (void)d;(void)t;(void)s; }
-static void toplevel_bounds(void *d, struct xdg_toplevel *t, int32_t w, int32_t h)
-{ (void)d;(void)t;(void)w;(void)h; }
 static const struct xdg_toplevel_listener toplevel_listener = {
     .configure = toplevel_configure, .close = toplevel_close,
     .configure_bounds = toplevel_config_bounds, .wm_capabilities = toplevel_wm_state,
@@ -257,7 +236,7 @@ static void kb_key(void *d, struct wl_keyboard *k, uint32_t s, uint32_t t, uint3
             c->repeat_sym = sym; c->repeat_key = key; c->repeat_mod = c->modmask;
             c->repeat_pressed = true;
             c->repeat_deadline_ms = now_ms() + (uint64_t)c->repeat_delay;
-        } else if(c->repeat_key == key){
+        } else if((uint32_t)c->repeat_key == key){
             c->repeat_pressed = false;
             c->repeat_deadline_ms = 0;
         }

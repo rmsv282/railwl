@@ -91,7 +91,7 @@ static void on_redraw(struct rc_client *c)
 }
 
 static void on_motion(struct rc_client *c, double mx, double my)
-{ (void)my; hover_x = (int)mx; }
+{ (void)c; (void)my; hover_x = (int)mx; }
 
 int main(void)
 {

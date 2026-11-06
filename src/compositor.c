@@ -244,8 +244,30 @@ static void surface_attach(struct wl_client *c, struct wl_resource *r,
     s->attach_null = (buf_r == NULL);
     s->pending = buf_r ? wl_resource_get_user_data(buf_r) : NULL;
 }
+/* accumulate damage until the renderer uploads it: only that rectangle is
+   re-sent to the GPU instead of the whole buffer.  Scale and transform are
+   always 1/normal here, so surface and buffer coordinates are the same. */
+static void dmg_add(struct wl_resource *r, int32_t x, int32_t y, int32_t w, int32_t h)
+{
+    struct rail_surface *s = wl_resource_get_user_data(r);
+    if(!s || w <= 0 || h <= 0) return;
+    int64_t x1 = (int64_t)x + w, y1 = (int64_t)y + h;
+    if(x < 0) x = 0;
+    if(y < 0) y = 0;
+    if(x1 > INT32_MAX) x1 = INT32_MAX;
+    if(y1 > INT32_MAX) y1 = INT32_MAX;
+    if(!s->dmg_any){
+        s->dmg_any = true;
+        s->dmg_x0 = x; s->dmg_y0 = y; s->dmg_x1 = (int)x1; s->dmg_y1 = (int)y1;
+        return;
+    }
+    if(x < s->dmg_x0) s->dmg_x0 = x;
+    if(y < s->dmg_y0) s->dmg_y0 = y;
+    if(x1 > s->dmg_x1) s->dmg_x1 = (int)x1;
+    if(y1 > s->dmg_y1) s->dmg_y1 = (int)y1;
+}
 static void surface_damage(struct wl_client *c, struct wl_resource *r, int32_t x, int32_t y, int32_t w, int32_t h)
-{ (void)c;(void)r;(void)x;(void)y;(void)w;(void)h; }
+{ (void)c; dmg_add(r, x, y, w, h); }
 
 /* every wl_surface.frame callback MUST get its done event: a client that never
    gets one stops painting (the window looks frozen). dropping one silently is
@@ -292,7 +314,7 @@ static void surface_set_transform(struct wl_client *c, struct wl_resource *r, in
 static void surface_set_scale(struct wl_client *c, struct wl_resource *r, int32_t sc)
 { (void)c;(void)r;(void)sc; }
 static void surface_damage_buffer(struct wl_client *c, struct wl_resource *r, int32_t x, int32_t y, int32_t w, int32_t h)
-{ (void)c;(void)r;(void)x;(void)y;(void)w;(void)h; }
+{ (void)c; dmg_add(r, x, y, w, h); }
 static void surface_offset(struct wl_client *c, struct wl_resource *r, int32_t x, int32_t y)
 { (void)c;(void)r;(void)x;(void)y; }
 

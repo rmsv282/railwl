@@ -537,6 +537,7 @@ static void upload_surface(struct rail_surface *s)
         /* GPU buffer: bind its EGLImage straight into the surface's texture.
            Nothing is copied, so the buffer stays locked until the frame that
            samples it has been presented (flush_buffer_releases). */
+        s->dmg_any = false;
         if(!b->img){ s->buffer_dirty = false; return; }
         if(!s->tex) glGenTextures(1, &s->tex);
         glBindTexture(GL_TEXTURE_2D, s->tex);
@@ -571,6 +572,47 @@ static void upload_surface(struct rail_surface *s)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     int w = b->w, h = b->h;
+
+    /* same-size buffer + reported damage: send only the damaged rectangle */
+    bool had_dmg = s->dmg_any;
+    int rx = s->dmg_x0, ry = s->dmg_y0, rx1 = s->dmg_x1, ry1 = s->dmg_y1;
+    s->dmg_any = false;
+    if(had_dmg && s->tex_shm && s->tex_w == w && s->tex_h == h){
+        if(rx1 > w) rx1 = w;
+        if(ry1 > h) ry1 = h;
+        int rw = rx1 - rx, rh = ry1 - ry;
+        if(rw > 0 && rh > 0 && (rw < w || rh < h)){
+            static uint8_t *pscratch;
+            static size_t pcap;
+            size_t rneed = (size_t)rw * 4, want = rneed * (size_t)rh;
+            if(want > pcap){
+                uint8_t *ns = realloc(pscratch, want);
+                if(!ns) return;
+                pscratch = ns; pcap = want;
+            }
+            for(int y = 0; y < rh; y++){
+                const uint8_t *src = bdata + (size_t)(ry + y) * (size_t)b->stride + (size_t)rx * 4;
+                uint8_t *dst = pscratch + (size_t)y * rneed;
+                if(gl_bgra) memcpy(dst, src, rneed);
+                else for(int x = 0; x < rw; x++){
+                    dst[x*4]   = src[x*4+2];
+                    dst[x*4+1] = src[x*4+1];
+                    dst[x*4+2] = src[x*4];
+                    dst[x*4+3] = src[x*4+3];
+                }
+            }
+            glTexSubImage2D(GL_TEXTURE_2D, 0, rx, ry, rw, rh,
+                            gl_bgra ? GL_BGRA_EXT : GL_RGBA, GL_UNSIGNED_BYTE, pscratch);
+            s->tex_opaque = (b->format == WL_SHM_FORMAT_XRGB8888);
+            s->tex_flip = false;
+            s->buffer_dirty = false;
+            if(!b->released){
+                b->released = true;
+                wl_buffer_send_release(b->resource);
+            }
+            return;
+        }
+    }
     size_t need = (size_t)w * 4;
     const void *data = bdata;
     uint8_t *tmp = NULL;
@@ -828,6 +870,26 @@ static bool render_gl(struct rail *r)
     /* the floating launcher, above tiles, popups and the bar */
     if(o->launcher){ draw_tile(o, o->launcher); draw_border(o, o->launcher); }
     rail_capture_service(r, false);   /* screenshots that want no pointer */
+    if(rail_sel.active){              /* region selection: dim everything, amber frame on the box */
+        int x = rail_sel.x0 < rail_sel.x1 ? rail_sel.x0 : rail_sel.x1;
+        int y = rail_sel.y0 < rail_sel.y1 ? rail_sel.y0 : rail_sel.y1;
+        int w = abs(rail_sel.x1 - rail_sel.x0) + 1, h = abs(rail_sel.y1 - rail_sel.y0) + 1;
+        glUseProgram(p_solid.id);
+        glUniform4f(p_solid.u_color, 0.0f, 0.0f, 0.0f, 0.45f);
+        if(rail_sel.dragging){
+            draw_quad(&p_solid, 0,     0,     o->w,         y,             o->w, o->h);
+            draw_quad(&p_solid, 0,     y + h, o->w,         o->h - y - h,  o->w, o->h);
+            draw_quad(&p_solid, 0,     y,     x,            h,             o->w, o->h);
+            draw_quad(&p_solid, x + w, y,     o->w - x - w, h,             o->w, o->h);
+            glUniform4f(p_solid.u_color, 1.0f, 191.0f/255.0f, 0.0f, 1.0f);
+            draw_quad(&p_solid, x,         y,         w, 1, o->w, o->h);
+            draw_quad(&p_solid, x,         y + h - 1, w, 1, o->w, o->h);
+            draw_quad(&p_solid, x,         y,         1, h, o->w, o->h);
+            draw_quad(&p_solid, x + w - 1, y,         1, h, o->w, o->h);
+        } else {
+            draw_quad(&p_solid, 0, 0, o->w, o->h, o->w, o->h);
+        }
+    }
     draw_cursor(r);
     rail_capture_service(r, true);    /* screenshots with the pointer */
 
